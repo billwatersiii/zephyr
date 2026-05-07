@@ -99,6 +99,7 @@ class TestInstance:
 
         self.run = False
         self.testcases: list[TestCase] = []
+        self.quarantined_testcases: set[str] = set()
         self.init_cases()
         self.filters = []
         self.filter_type = None
@@ -215,6 +216,11 @@ class TestInstance:
         for c in self.testcases:
             if c.name == name:
                 return c
+
+        if name in self.quarantined_testcases:
+            # Return a temporary case not tracked in self.testcases so that
+            # quarantined test results don't appear in testplan.json or twister.json.
+            return TestCase(name=name)
 
         logger.debug(f"Could not find a matching testcase for {name}")
         tc = TestCase(name=name)

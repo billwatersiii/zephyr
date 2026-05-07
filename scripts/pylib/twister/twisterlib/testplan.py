@@ -668,6 +668,64 @@ class TestPlan:
             if not matched_quarantine and self.options.quarantine_verify:
                 instance.add_filter("Not under quarantine", Filters.CMD_LINE)
 
+            # Also check individual testcase identifiers against the quarantine list.
+            # This allows quarantining specific test functions without skipping the
+            # entire scenario (e.g. "kernel.timer.timer.timer_ramp").
+            # Quarantined test cases are removed entirely so they don't appear in
+            # testplan.json or status reporting. If all test cases in the instance
+            # are quarantined, the whole instance is skipped.
+            if not self.options.quarantine_verify:
+                remaining_cases = []
+                for case in instance.testcases:
+                    tc_quarantine = self.quarantine.get_matched_quarantine(
+                        case.name,
+                        plat.name,
+                        plat.arch,
+                        sim_name
+                    )
+                    if tc_quarantine:
+                        logger.debug(
+                            f"Quarantining individual testcase '{case.name}': {tc_quarantine}"
+                        )
+                        instance.quarantined_testcases.add(case.name)
+                    else:
+                        remaining_cases.append(case)
+
+                # Also scan the quarantine list directly for testcase-level identifiers
+                # that were not found by the static source scan (e.g. freeform tests
+                # that are only discovered at runtime from serial output).  Any quarantine
+                # scenario string that starts with "<scenario_id>." but is longer than the
+                # scenario id itself is treated as a testcase identifier belonging to this
+                # instance.
+                scenario_prefix = instance.testsuite.id + "."
+                for qelem in self.quarantine.quarantine.qlist:
+                    if qelem.platforms and not any(
+                        p.fullmatch(plat.name) for p in qelem.re_platforms
+                    ):
+                        continue
+                    if qelem.architectures and not any(
+                        p.fullmatch(plat.arch) for p in qelem.re_architectures
+                    ):
+                        continue
+                    if qelem.simulations and not any(
+                        p.fullmatch(sim_name) for p in qelem.re_simulations
+                    ):
+                        continue
+                    for scenario_str in qelem.scenarios:
+                        if (scenario_str.startswith(scenario_prefix)
+                                and scenario_str not in instance.quarantined_testcases):
+                            logger.debug(
+                                f"Pre-quarantining runtime testcase "
+                                f"'{scenario_str}': {qelem.comment}"
+                            )
+                            instance.quarantined_testcases.add(scenario_str)
+
+                if instance.quarantined_testcases:
+                    instance.testcases = remaining_cases
+                    if not remaining_cases:
+                        instance.status = TwisterStatus.SKIP
+                        instance.reason = "Quarantine: all test cases quarantined"
+
     def load_from_file(self, file, filter_platform=None):
         if filter_platform is None:
             filter_platform = []

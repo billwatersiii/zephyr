@@ -174,8 +174,22 @@ class Harness:
                 self.status = TwisterStatus.PASS
 
         if self.RUN_FAILED in line:
-            self.status = TwisterStatus.FAIL
-            self.reason = "Testsuite failed"
+            # If all failures are from quarantined testcases (none in instance.testcases
+            # have FAIL/ERROR status), treat the run as passed so quarantined tests don't
+            # block CI. A fault (Zephyr fatal error) always takes precedence.
+            if (
+                not self.fault
+                and self.instance is not None
+                and self.instance.quarantined_testcases
+                and not any(
+                    tc.status in (TwisterStatus.FAIL, TwisterStatus.ERROR)
+                    for tc in self.instance.testcases
+                )
+            ):
+                self.status = TwisterStatus.PASS
+            else:
+                self.status = TwisterStatus.FAIL
+                self.reason = "Testsuite failed"
 
         if self.fail_on_fault and line == self.FAULT:
             self.fault = True
