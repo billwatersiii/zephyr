@@ -155,7 +155,8 @@ static void _ifx_cat1_rtc_from_pdl_time(cy_stc_rtc_config_t *pdlTime, const int 
 	z_time->tm_nsec = 0;
 }
 
-static void _ifx_cat1_rtc_isr_handler(void)
+/* Only referenced when the secure century IRQ is wired up (see init). */
+__maybe_unused static void _ifx_cat1_rtc_isr_handler(void)
 {
 	Cy_RTC_Interrupt(_ifx_cat1_rtc_dst, NULL != _ifx_cat1_rtc_dst);
 }
@@ -172,6 +173,14 @@ void _ifx_cat1_rtc_century_interrupt(void)
 
 static int ifx_cat1_rtc_init(const struct device *dev)
 {
+#ifdef CONFIG_RTC_INFINEON_SKIP_SECURE_INIT
+	/* Secure firmware (TF-M) owns the SRSS backup clock, reset-cause and RTC
+	 * interrupt; touching them from the non-secure world faults. Assume the
+	 * secure world configured the backup clock and leave the counter running.
+	 */
+	ARG_UNUSED(dev);
+	return 0;
+#else
 	cy_rslt_t rslt = CY_RSLT_SUCCESS;
 
 	Cy_SysClk_ClkBakSetSource(CY_SYSCLK_BAK_IN_CLKLF);
@@ -208,6 +217,7 @@ static int ifx_cat1_rtc_init(const struct device *dev)
 	irq_enable(DT_INST_IRQN(0));
 
 	return rslt;
+#endif /* CONFIG_RTC_INFINEON_SKIP_SECURE_INIT */
 }
 
 static int ifx_cat1_rtc_set_time(const struct device *dev, const struct rtc_time *timeptr)
@@ -270,7 +280,8 @@ static int ifx_cat1_rtc_get_time(const struct device *dev, struct rtc_time *time
 
 	cy_stc_rtc_config_t dateTime = {.hrFormat = CY_RTC_24_HOURS};
 
-	if (_ifx_cat1_rtc_get_state() != _IFX_CAT1_RTC_STATE_TIME_SET) {
+	if (!IS_ENABLED(CONFIG_RTC_INFINEON_SKIP_SECURE_INIT) &&
+	    _ifx_cat1_rtc_get_state() != _IFX_CAT1_RTC_STATE_TIME_SET) {
 		LOG_ERR("Valid time has not been set with rtc_set_time yet");
 		return -ENODATA;
 	}
@@ -278,7 +289,13 @@ static int ifx_cat1_rtc_get_time(const struct device *dev, struct rtc_time *time
 	k_spinlock_key_t key = k_spin_lock(&data->lock);
 
 	Cy_RTC_GetDateAndTime(&dateTime);
-	const int year = (int)(dateTime.year + _ifx_cat1_rtc_get_century());
+	uint16_t century = _ifx_cat1_rtc_get_century();
+
+	if (IS_ENABLED(CONFIG_RTC_INFINEON_SKIP_SECURE_INIT) && century == 0) {
+		/* No-op init never set the century; assume the 21st. */
+		century = _IFX_CAT1_RTC_INIT_CENTURY;
+	}
+	const int year = (int)(dateTime.year + century);
 
 	k_spin_unlock(&data->lock, key);
 

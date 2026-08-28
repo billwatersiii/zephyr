@@ -12,3 +12,18 @@ config RTC_INFINEON_CAT1
 	select USE_INFINEON_RTC
 	help
 	  This option enables the RTC driver for Infineon CAT1 family.
+
+config RTC_INFINEON_SKIP_SECURE_INIT
+	bool "Skip secure-only RTC init (non-secure under TF-M)"
+	depends on RTC_INFINEON_CAT1
+	default y if TRUSTED_EXECUTION_NONSECURE
+	help
+	  On PSE84 non-secure applications running under TF-M, the secure
+	  firmware owns the SRSS backup clock select, the reset-cause register
+	  and the RTC interrupt. Accessing those from the non-secure world
+	  faults. Enable this to skip the secure-only init steps (backup clock
+	  source, reset-cause read, century IRQ and deep-sleep PM registration)
+	  and assume the secure world configured the backup clock. The RTC
+	  counter and the non-secure backup registers stay usable, so set_time
+	  and get_time keep working.
+
